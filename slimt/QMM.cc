@@ -1,6 +1,5 @@
 #include "slimt/QMM.hh"
 
-#ifdef SLIMT_HAS_INTGEMM
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -8,29 +7,30 @@
 
 #include "slimt/Tensor.hh"
 
-namespace slimt::qmm::detail {
-constexpr Provider kProvider = Provider::Intgemm;
-}
-// NOLINTNEXTLINE: The C++ file inclusion is intended.
-#include "slimt/qmm/Intgemm.inl.cc"
-#endif
-
-#ifdef SLIMT_HAS_RUY
-
-namespace slimt::qmm::detail {
-constexpr Provider kProvider = Provider::Ruy;
-}
-// NOLINTNEXTLINE: The C++ file inclusion is intended.
-#include "slimt/qmm/Ruy.inl.cc"
-#endif
-
-#ifdef SLIMT_HAS_GEMMOLOGY
-
+// PlayTranslate spike patch: select exactly ONE int8 provider, preferring
+// gemmology. On Android we keep ruy linked for float sgemm (TensorOps.cc, the
+// WITH_BLAS=OFF path) while using gemmology for int8 — which avoids the
+// ruy-on-ARM int8 garbage-output bug (DavidVentura/offline-translator#185).
+// Original slimt declared the three blocks with independent #ifdefs, which
+// double-defines kProvider when ruy+gemmology are both enabled.
+#if defined(SLIMT_HAS_GEMMOLOGY)
 namespace slimt::qmm::detail {
 constexpr Provider kProvider = Provider::Gemmology;
 }
 // NOLINTNEXTLINE: The C++ file inclusion is intended.
 #include "slimt/qmm/Gemmology.inl.cc"
+#elif defined(SLIMT_HAS_RUY)
+namespace slimt::qmm::detail {
+constexpr Provider kProvider = Provider::Ruy;
+}
+// NOLINTNEXTLINE: The C++ file inclusion is intended.
+#include "slimt/qmm/Ruy.inl.cc"
+#elif defined(SLIMT_HAS_INTGEMM)
+namespace slimt::qmm::detail {
+constexpr Provider kProvider = Provider::Intgemm;
+}
+// NOLINTNEXTLINE: The C++ file inclusion is intended.
+#include "slimt/qmm/Intgemm.inl.cc"
 #endif
 
 namespace slimt::qmm {

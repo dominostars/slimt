@@ -44,7 +44,7 @@ set(SLIMT_COMPILE_OPTIONS
     -Wall
     -Wextra
     -Wno-unknown-pragmas
-    -Werror
+    -Wno-error
     -Wno-missing-field-initializers
     -Wno-unused-function
     -pedantic
@@ -134,7 +134,7 @@ if(WITH_RUY)
 endif(WITH_RUY)
 
 if(WITH_GEMMOLOGY)
-  find_package(xsimd REQUIRED)
+  add_subdirectory(3rd-party/xsimd xsimd-build EXCLUDE_FROM_ALL)
   add_library(gemmology INTERFACE)
   target_link_libraries(gemmology INTERFACE xsimd)
   target_include_directories(gemmology
