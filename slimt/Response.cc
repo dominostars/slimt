@@ -177,11 +177,15 @@ std::vector<Alignment> remap_alignments(const Response &first,
 Response combine(Response &&first, Response &&second) {
   Response combined;
 
-  // Compute alignment first using internal matrices and mappings.
-  if (!first.alignments.empty()) {
-    combined.alignments = remap_alignments(first, second);
-  }
-
+  // Pivot alignment remapping (remap_alignments) is intentionally skipped.
+  // It assumes the intermediate pivot text has IDENTICAL sentence and word
+  // segmentation across both hops (it indexes first/second.alignments[sentence]
+  // up to first.source.sentence_count(), and multiplies per-word alignment
+  // matrices). That invariant breaks whenever the second model re-segments the
+  // pivot differently (common with multi-sentence input), producing
+  // out-of-bounds reads that segfault on Android arm64 (and survive by luck on
+  // host). PlayTranslate consumes only target.text from a pivot, never the
+  // alignment, so dropping the remap is both safe and faster.
   combined.source = std::move(first.source);
   combined.target = std::move(second.target);
 

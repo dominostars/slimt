@@ -180,7 +180,9 @@ void run(const Options &options) {
         .html = options.html  //
     };
 
-    auto responses = service.translate(model, {std::move(source)}, opts);
+    auto responses =
+        follow ? service.pivot(model, follow, {std::move(source)}, opts)
+               : service.translate(model, {std::move(source)}, opts);
     fprintf(stdout, "%s\n", responses[0].target.text.c_str());
   }
 
