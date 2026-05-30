@@ -31,10 +31,11 @@ Package<io::MmapFile> mmap_from(const Package<std::string> &package) {
   };
 
   return {
-      .model = maybe_mmap(package.model),            //
-      .vocabulary = maybe_mmap(package.vocabulary),  //
-      .shortlist = maybe_mmap(package.shortlist),    //
-      .ssplit = maybe_mmap(package.ssplit),          //
+      .model = maybe_mmap(package.model),                          //
+      .vocabulary = maybe_mmap(package.vocabulary),                //
+      .target_vocabulary = maybe_mmap(package.target_vocabulary),  //
+      .shortlist = maybe_mmap(package.shortlist),                  //
+      .ssplit = maybe_mmap(package.ssplit),                        //
   };
 }
 
@@ -42,9 +43,21 @@ Package<View> view_from(const Package<io::MmapFile> &mmap) {
   return {
       .model = {mmap.model.data(), mmap.model.size()},                 //
       .vocabulary = {mmap.vocabulary.data(), mmap.vocabulary.size()},  //
-      .shortlist = {mmap.shortlist.data(), mmap.shortlist.size()},     //
-      .ssplit = {mmap.ssplit.data(), mmap.ssplit.size()},              //
+      .target_vocabulary = {mmap.target_vocabulary.data(),
+                            mmap.target_vocabulary.size()},        //
+      .shortlist = {mmap.shortlist.data(), mmap.shortlist.size()},  //
+      .ssplit = {mmap.ssplit.data(), mmap.ssplit.size()},          //
   };
+}
+
+// Build the optional target vocabulary. An empty view (no trgvocab file) yields
+// nullptr, which makes Model::target_vocabulary() alias the source vocabulary —
+// preserving single-vocab behaviour exactly.
+std::unique_ptr<Vocabulary> load_target_vocabulary(View view) {
+  if (view.data == nullptr || view.size == 0) {
+    return nullptr;
+  }
+  return std::make_unique<Vocabulary>(view);
 }
 
 }  // namespace
@@ -53,24 +66,26 @@ Model::Model(const Config &config, const Package<View> &package)
     : id_(model_id++),
       config_(config),
       view_(package),
-      vocabulary_(package.vocabulary),
-      processor_(config.split_mode, vocabulary_, Aligned()),
+      source_vocabulary_(package.vocabulary),
+      target_vocabulary_(load_target_vocabulary(package.target_vocabulary)),
+      processor_(config.split_mode, source_vocabulary_, Aligned()),
       transformer_(config.encoder_layers, config.decoder_layers,
                    config.num_heads, config.feed_forward_depth, package.model),
       shortlist_generator_(make_shortlist_generator(
-          package.shortlist, vocabulary_, vocabulary_)) {}
+          package.shortlist, source_vocabulary_, target_vocabulary())) {}
 
 Model::Model(const Config &config, const Package<std::string> &package)
     : id_(model_id++),
       config_(config),
       mmap_(mmap_from(package)),
       view_(view_from(*mmap_)),
-      vocabulary_(view_.vocabulary),
-      processor_(config.split_mode, vocabulary_, Aligned()),
+      source_vocabulary_(view_.vocabulary),
+      target_vocabulary_(load_target_vocabulary(view_.target_vocabulary)),
+      processor_(config.split_mode, source_vocabulary_, Aligned()),
       transformer_(config.encoder_layers, config.decoder_layers,
                    config.num_heads, config.feed_forward_depth, view_.model),
       shortlist_generator_(make_shortlist_generator(
-          view_.shortlist, vocabulary_, vocabulary_)) {}
+          view_.shortlist, source_vocabulary_, target_vocabulary())) {}
 
 std::optional<ShortlistGenerator> Model::make_shortlist_generator(
     View view, const Vocabulary &source, const Vocabulary &target) {
@@ -123,7 +138,7 @@ Histories Model::decode(const Tensor &encoder_out, const Input &input) const {
   // std::iota(indices.begin(), indices.end(), 0);
 
   std::vector<bool> complete(batch_size, false);
-  uint32_t eos = vocabulary_.eos_id();
+  uint32_t eos = target_vocabulary().eos_id();
   auto record = [eos, &complete](Words &step, Sentences &sentences) {
     size_t finished = 0;
     for (size_t i = 0; i < step.size(); i++) {
@@ -148,9 +163,9 @@ Histories Model::decode(const Tensor &encoder_out, const Input &input) const {
 
   if (indices) {
     previous_slice =
-        greedy_sample_from_words(logits, vocabulary_, *indices, batch_size);
+        greedy_sample_from_words(logits, target_vocabulary(), *indices, batch_size);
   } else {
-    previous_slice = greedy_sample(logits, vocabulary_, batch_size);
+    previous_slice = greedy_sample(logits, target_vocabulary(), batch_size);
   }
 
   update_alignment(input.lengths(), complete, attn, alignments);
@@ -163,9 +178,9 @@ Histories Model::decode(const Tensor &encoder_out, const Input &input) const {
                                        previous_slice, indices);
     if (indices) {
       previous_slice =
-          greedy_sample_from_words(logits, vocabulary_, *indices, batch_size);
+          greedy_sample_from_words(logits, target_vocabulary(), *indices, batch_size);
     } else {
-      previous_slice = greedy_sample(logits, vocabulary_, batch_size);
+      previous_slice = greedy_sample(logits, target_vocabulary(), batch_size);
     }
     update_alignment(input.lengths(), complete, attn, alignments);
     remaining = record(previous_slice, sentences);

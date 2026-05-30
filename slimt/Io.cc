@@ -165,21 +165,23 @@ std::vector<io::Item> load_items(void* current) {
     if (item.type == Type::ig8) {
       // since Embedding layer quantized weights need to be dequantised, we
       // have a special case for items containing the name "Wemb"
-      if (item.name == "Wemb_QuantMultA") {
-        // Wemb_QuantMultA hints at this being the quantization multiplier for
-        // when we have to process at linear multiply on embedding.  However,
-        // this value does not hold anything useful.
-
-        // It is `none_QuantMultA` of type `float32` that holds the useful
-        // quantization multiplier.
-
-        // Pointing to this, that's all, mostly a no-op and prevents falling
-        // into the other branch.
+      if (item.name == "Wemb_QuantMultA" ||
+          item.name == "decoder_Wemb_QuantMultA") {
+        // ig8 placeholder. For tied models the useful output activation
+        // multiplier is the f32 none_QuantMultA. Split-vocab CJK models ship
+        // neither none_QuantMultA nor a usable output activation scale here:
+        // decoder_Wemb_QuantMultA encodes the *embedding's* scale (127/it equals
+        // the tied none_QuantMultA only because a tied Wemb backs both the
+        // embedding and the output projection; in a split model they differ, and
+        // using it produces degenerate logits). So the split output projection
+        // quantizes its activations dynamically at decode time (see Transformer
+        // dynamic_activation_quant). Just point at the data; it is not consumed.
         item.view = View{
             .data = ptr,  //
             .size = size  //
         };
-      } else if (item.name == "Wemb") {  // NOLINT
+      } else if (item.name == "Wemb" || item.name == "encoder_Wemb" ||
+                 item.name == "decoder_Wemb") {  // NOLINT
         size_t num_elements = item.shape.elements();
         // At the end of items is the quantization multiplier.So we do some
         // pointer arithmetic to move ahead of the elements to extract the
@@ -203,25 +205,30 @@ std::vector<io::Item> load_items(void* current) {
         size_t cols = item.shape.dim(-1);
         assert((rows * cols) % 8 == 0);
 
-        // PrepareB and write.
-        embedding_processed.name = "Wemb_intgemm8";
-        embedding_processed.shape = Shape({cols, rows});
-        embedding_processed.type = Type::i8;
-        size_t prepared_size =
-            embedding_processed.shape.elements() * sizeof(int8_t) +
-            sizeof(float);
-        Aligned embedding_aligned(kAlignWidth, prepared_size);
-        auto* prepared = reinterpret_cast<int8_t*>(embedding_aligned.data());
-        qmm::prepare_weight_transposed(weights, prepared,
-                                       quantization_multiplier, cols, rows);
+        // PrepareB and write the int8 output-projection weight. Only the
+        // decoder-side embedding (tied "Wemb" or split "decoder_Wemb") backs the
+        // decoder output GEMM; the split source embedding "encoder_Wemb" is
+        // input-only (index_select lookup) and needs no transposed int8 form.
+        if (item.name != "encoder_Wemb") {
+          embedding_processed.name = item.name + "_intgemm8";
+          embedding_processed.shape = Shape({cols, rows});
+          embedding_processed.type = Type::i8;
+          size_t prepared_size =
+              embedding_processed.shape.elements() * sizeof(int8_t) +
+              sizeof(float);
+          Aligned embedding_aligned(kAlignWidth, prepared_size);
+          auto* prepared = reinterpret_cast<int8_t*>(embedding_aligned.data());
+          qmm::prepare_weight_transposed(weights, prepared,
+                                         quantization_multiplier, cols, rows);
 
-        // Save quantization multiplier.
-        auto* embedding_quantization_multiplier_addr =
-            reinterpret_cast<float*>(prepared + (rows * cols));
-        *embedding_quantization_multiplier_addr = quantization_multiplier;
+          // Save quantization multiplier.
+          auto* embedding_quantization_multiplier_addr =
+              reinterpret_cast<float*>(prepared + (rows * cols));
+          *embedding_quantization_multiplier_addr = quantization_multiplier;
 
-        // SLIMT_TRACE(embedding_processed.shape);
-        set_item(embedding_processed, std::move(embedding_aligned));
+          // SLIMT_TRACE(embedding_processed.shape);
+          set_item(embedding_processed, std::move(embedding_aligned));
+        }
       } else {
         // The matrix has to be processed to the format expected by intgemm.
         size_t rows = item.shape.dim(-2);

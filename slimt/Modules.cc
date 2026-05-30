@@ -168,6 +168,35 @@ Tensor affine_with_select(const Affine &parameters, const Tensor &x,
   return y;
 }
 
+// Overloads taking an explicit activation multiplier. The split-vocab output
+// projection uses these with a value computed at decode time, because those
+// models ship no usable precomputed output activation alpha.
+Tensor affine(const Affine &parameters, const Tensor &x, float a_quant,
+              const std::string &name /* = ""*/) {
+  Tensor y = qmm::affine(                              //
+      x,                                               //
+      parameters.W, parameters.b,                      //
+      a_quant,                                         //
+      retrieve_quantization_multiplier(parameters.W),  //
+      name                                             //
+  );
+  return y;
+}
+
+Tensor affine_with_select(const Affine &parameters, const Tensor &x,
+                          const std::vector<uint32_t> &indices, float a_quant,
+                          const std::string &name /*= ""*/) {
+  Tensor y = qmm::affine_with_select(                  //
+      x,                                               //
+      parameters.W, parameters.b,                      //
+      a_quant,                                         //
+      retrieve_quantization_multiplier(parameters.W),  //
+      indices,                                         //
+      name                                             //
+  );
+  return y;
+}
+
 Tensor linear(const Linear &parameters, const Tensor &x,
               const std::string &name = "") {
   Tensor y = qmm::dot(                                 //

@@ -43,12 +43,14 @@ struct Options {
     app.add_option("--root", root, "Path to prefix other filenames to");
     app.add_option("--model", translator.model, "Path to model");
     app.add_option("--vocabulary", translator.vocabulary, "Path to vocabulary");
+    app.add_option("--target-vocabulary", translator.target_vocabulary, "Path to target vocabulary (split-vocab models)");
     app.add_option("--shortlist", translator.shortlist, "Path to shortlist");
     app.add_option("--ssplit", translator.ssplit, "Path to ssplit prefixes file.");
 
     app.add_option("--follow-root", follow_root, "Path to prefix other filenames to");
     app.add_option("--follow-model", follow.model, "Path to model");
     app.add_option("--follow-vocabulary", follow.vocabulary, "Path to vocabulary");
+    app.add_option("--follow-target-vocabulary", follow.target_vocabulary, "Path to target vocabulary (split-vocab models)");
     app.add_option("--follow-shortlist", follow.shortlist, "Path to shortlist");
     app.add_option("--follow-ssplit", follow.ssplit, "Path to ssplit prefixes file.");
 
@@ -83,10 +85,11 @@ void run(const Options &options) {
       [&](const std::string &root,
           const Package<std::string> &translator) -> Package<std::string> {
     return {
-        .model = prefix(root, translator.model),            //
-        .vocabulary = prefix(root, translator.vocabulary),  //
-        .shortlist = prefix(root, translator.shortlist),    //
-        .ssplit = prefix(root, translator.ssplit)           //
+        .model = prefix(root, translator.model),                          //
+        .vocabulary = prefix(root, translator.vocabulary),                //
+        .target_vocabulary = prefix(root, translator.target_vocabulary),  //
+        .shortlist = prefix(root, translator.shortlist),                  //
+        .ssplit = prefix(root, translator.ssplit)                         //
     };
   };
 

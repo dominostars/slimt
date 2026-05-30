@@ -68,7 +68,7 @@ Ptr<Request> make_request(size_t id, const Ptr<Model> &model,
       id, model->id(),                          //
       std::move(annotated_text),                //
       std::move(segments),                      //
-      model->vocabulary(),                      //
+      model->target_vocabulary(),               //
       cache,                                    //
       std::forward<Continuation>(continuation)  //
   );

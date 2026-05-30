@@ -30,6 +30,14 @@ class Decoder {
 
   void register_parameters(const std::string &prefix, ParameterMap &parameters);
 
+  // Re-point the decoder's (target-side) embedding after parameter load, and
+  // tell it whether the model is split-vocab. Tied models keep the shared
+  // source embedding and the "Wemb_intgemm8"/"none_QuantMultA" output params;
+  // split-vocab models use the separate target embedding and the
+  // "decoder_Wemb_*" params. See Transformer's constructor.
+  void set_embedding(const Tensor &embedding) { embedding_ = &embedding; }
+  void set_split_vocab(bool split) { split_vocab_ = split; }
+
   std::vector<Tensor> start_states(size_t batch_size) const;
   std::tuple<Tensor, Tensor> step(const Tensor &encoder_out, const Tensor &mask,
                                   std::vector<Tensor> &states,
@@ -37,7 +45,8 @@ class Decoder {
                                   const std::optional<Words> &shortlist) const;
 
  private:
-  const Tensor &embedding_;
+  const Tensor *embedding_;
+  bool split_vocab_ = false;
   std::vector<DecoderLayer> decoder_;
   Affine output_;
 };
@@ -66,7 +75,9 @@ class Transformer {
   void load_parameters();
 
   std::vector<io::Item> items_;
-  Tensor embedding_;
+  Tensor embedding_;          // encoder/source (or tied) float embedding
+  Tensor decoder_embedding_;  // decoder/target float embedding (split-vocab only)
+  bool split_vocab_ = false;
   Encoder encoder_;
   Decoder decoder_;
 };

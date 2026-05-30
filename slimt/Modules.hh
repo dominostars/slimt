@@ -109,4 +109,14 @@ Tensor affine_with_select(const Affine &parameters, const Tensor &x,
 Tensor affine(const Affine &parameters, const Tensor &x,
               const std::string &name = "");
 
+// Overloads taking an explicit activation multiplier, used by the split-vocab
+// output projection (those models ship no usable precomputed output alpha, so
+// the value is computed at decode time).
+Tensor affine_with_select(const Affine &parameters, const Tensor &x,
+                          const std::vector<uint32_t> &indices, float a_quant,
+                          const std::string &name = "");
+
+Tensor affine(const Affine &parameters, const Tensor &x, float a_quant,
+              const std::string &name = "");
+
 }  // namespace slimt

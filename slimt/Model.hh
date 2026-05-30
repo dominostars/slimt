@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -23,7 +24,8 @@ class Tensor;
 template <class Field>
 struct Package {
   Field model;
-  Field vocabulary;
+  Field vocabulary;         // source-side vocabulary
+  Field target_vocabulary;  // empty => shared with source (single-vocab models)
   Field shortlist;
   Field ssplit;
 };
@@ -56,7 +58,13 @@ class SLIMT_EXPORT Model {
   Histories forward(const Input &input) const;
 
   const Config &config() const { return config_; }
-  const Vocabulary &vocabulary() const { return vocabulary_; }
+  const Vocabulary &vocabulary() const { return source_vocabulary_; }
+  // Target-side vocabulary used for decoding. Split-vocab models (e.g. en->CJK)
+  // ship a separate target vocabulary; single-vocab models fall back to the
+  // source one, so existing models decode exactly as before.
+  const Vocabulary &target_vocabulary() const {
+    return target_vocabulary_ ? *target_vocabulary_ : source_vocabulary_;
+  }
   const TextProcessor &processor() const { return processor_; }
   const Transformer &transformer() const { return transformer_; }
   size_t id() const { return id_; }  // NOLINT
@@ -76,7 +84,8 @@ class SLIMT_EXPORT Model {
   std::optional<Mmap> mmap_;
   Package<View> view_;
 
-  Vocabulary vocabulary_;
+  Vocabulary source_vocabulary_;
+  std::unique_ptr<Vocabulary> target_vocabulary_;
   TextProcessor processor_;
   Transformer transformer_;
   std::optional<ShortlistGenerator> shortlist_generator_;

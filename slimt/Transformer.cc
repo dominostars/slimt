@@ -1,5 +1,6 @@
 #include "slimt/Transformer.hh"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,35 @@
 #include "slimt/Vocabulary.hh"
 
 namespace slimt {
+
+namespace {
+// Activation multiplier for the split-vocab output projection, computed at
+// decode time because those models ship no usable precomputed alpha. A high
+// percentile of |x| (rather than the raw max) keeps a lone outlier activation
+// from compressing the int8 range and adding quantization noise.
+float dynamic_activation_quant(const Tensor &x) {
+  size_t n = x.size();
+  if (n == 0) {
+    return 1.0F;
+  }
+  const float *data = x.data<float>();
+  std::vector<float> mags(n);
+  for (size_t i = 0; i < n; ++i) {
+    mags[i] = std::fabs(data[i]);
+  }
+  // Clip the top ~5% of activation magnitudes before quantizing. These tiny
+  // base-memory models have heavy-tailed activations; quantizing against the raw
+  // max lets a lone outlier compress the int8 range and produce a quant-noise
+  // token stutter (e.g. ですねね). The 95th percentile was the least-aggressive
+  // clip that removed the observed stutter with no regression across a diverse
+  // ja/zh/ko set (threshold was ~0.97; 0.95 leaves margin for unseen inputs).
+  constexpr float kPercentile = 0.95F;
+  size_t k = static_cast<size_t>(kPercentile * static_cast<float>(n - 1));
+  std::nth_element(mags.begin(), mags.begin() + k, mags.end());
+  float ref = mags[k];
+  return ref > 0.0F ? 127.0F / ref : 1.0F;
+}
+}  // namespace
 
 void transform_embedding(Tensor &word_embedding, size_t start /* = 0*/) {
   // This is a pain, why does marian-transpose here, I do not get yet.
@@ -90,12 +120,27 @@ Transformer::Transformer(size_t encoder_layers, size_t decoder_layers,
     : items_(io::load_items(model.data)),
       encoder_(encoder_layers, num_heads, feed_forward_depth),  //
       decoder_(decoder_layers, num_heads, feed_forward_depth, embedding_) {
+  // Split-vocab models (e.g. en->CJK) ship separate encoder_Wemb/decoder_Wemb
+  // embeddings instead of a single tied Wemb. Detect that up front so parameter
+  // registration binds the right item names.
+  for (const io::Item &item : items_) {
+    if (item.name == "decoder_Wemb") {
+      split_vocab_ = true;
+      break;
+    }
+  }
+  decoder_.set_split_vocab(split_vocab_);
   load_parameters();
+  // The decoder was constructed bound to the (tied) source embedding; for
+  // split-vocab, switch it to the separately-loaded target embedding.
+  if (split_vocab_) {
+    decoder_.set_embedding(decoder_embedding_);
+  }
 }
 
 Decoder::Decoder(size_t layers, size_t num_heads, size_t feed_forward_depth,
                  const Tensor &embedding)
-    : embedding_(embedding) {
+    : embedding_(&embedding) {
   for (size_t i = 0; i < layers; i++) {
     decoder_.emplace_back(i + 1, feed_forward_depth, num_heads);
   }
@@ -108,8 +153,19 @@ void Decoder::register_parameters(const std::string &prefix,
   // https://github.com/browsermt/marian-dev/blob/2be8344fcf2776fb43a7376284067164674cbfaf/scripts/alphas/extract_stats.py#L55
   // - none_QuantMultA is generated when used with shortlist
   // - Wemb_QuantMultA is generated when used without shortlist.
-  parameters.emplace("Wemb_intgemm8", &output_.W);
-  parameters.emplace("none_QuantMultA", &output_.quant);
+  if (split_vocab_) {
+    parameters.emplace("decoder_Wemb_intgemm8", &output_.W);
+    // Split-vocab models ship no usable output activation alpha (none_QuantMultA
+    // is absent; decoder_Wemb_QuantMultA is the embedding scale, not the decoder
+    // hidden-state scale, and using it yields degenerate logits). Bind it to
+    // satisfy the loader, but the output projection's activation multiplier is
+    // computed dynamically at decode time (Decoder::step ->
+    // dynamic_activation_quant); output_.quant is otherwise unused.
+    parameters.emplace("decoder_Wemb_QuantMultA", &output_.quant);
+  } else {
+    parameters.emplace("Wemb_intgemm8", &output_.W);
+    parameters.emplace("none_QuantMultA", &output_.quant);
+  }
   parameters.emplace("decoder_ff_logit_out_b", &output_.b);
 
   for (DecoderLayer &layer : decoder_) {
@@ -132,7 +188,7 @@ std::tuple<Tensor, Tensor> Decoder::step(
   // https://github.com/browsermt/marian-dev/blob/f436b2b7528927333da1629a74fde3779c0a96dd/src/models/decoder.h#L67
   auto from_sentences = [this](const Words &previous_step, size_t batch_size) {
     const std::string name = "target_embed";
-    size_t embed_dim = embedding_.dim(-1);
+    size_t embed_dim = embedding_->dim(-1);
 
     // If no words, generate one embedding with all 0s.
     if (previous_step.empty()) {
@@ -152,7 +208,7 @@ std::tuple<Tensor, Tensor> Decoder::step(
       data[batch_id] = previous_step[batch_id];
     }
 
-    Tensor embedding = index_select(embedding_, indices);
+    Tensor embedding = index_select(*embedding_, indices);
     return embedding;
   };
 
@@ -174,11 +230,17 @@ std::tuple<Tensor, Tensor> Decoder::step(
   }
 
   if (shortlist) {
-    Tensor logits = affine_with_select(output_, x, *shortlist, "logits");
+    Tensor logits =
+        split_vocab_
+            ? affine_with_select(output_, x, *shortlist,
+                                 dynamic_activation_quant(x), "logits")
+            : affine_with_select(output_, x, *shortlist, "logits");
     return {std::move(logits), std::move(guided_alignment)};
   }
 
-  Tensor logits = affine(output_, x, "logits");
+  Tensor logits = split_vocab_
+                      ? affine(output_, x, dynamic_activation_quant(x), "logits")
+                      : affine(output_, x, "logits");
   return {std::move(logits), std::move(guided_alignment)};
 }
 
@@ -226,7 +288,12 @@ void Transformer::load_parameters() {
 
 void Transformer::register_parameters(const std::string &prefix,
                                       ParameterMap &parameters) {
-  parameters.emplace("Wemb", &embedding_);
+  if (split_vocab_) {
+    parameters.emplace("encoder_Wemb", &embedding_);
+    parameters.emplace("decoder_Wemb", &decoder_embedding_);
+  } else {
+    parameters.emplace("Wemb", &embedding_);
+  }
   encoder_.register_parameters(prefix, parameters);
   decoder_.register_parameters(prefix, parameters);
 }
