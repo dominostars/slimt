@@ -82,7 +82,12 @@ if(SLIMT_USE_INTERNAL_PCRE2)
     CONFIGURE_COMMAND ${CMAKE_COMMAND} ${PCRE2_SOURCE_DIR}
                       ${PCRE2_CONFIGURE_OPTIONS}
     BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR>
-    INSTALL_DIR ${CMAKE_BINARY_DIR})
+    INSTALL_DIR ${CMAKE_BINARY_DIR}
+    # Declare the produced static lib so the Ninja generator (used by the
+    # Android Gradle externalNativeBuild) knows the rule that creates it.
+    # Without this, linking a target against this path fails with
+    # "missing and no known rule to make it". (make tolerated the omission.)
+    BUILD_BYPRODUCTS ${PCRE2_LIBRARIES})
 
   add_library(pcre2-lib INTERFACE)
   add_dependencies(pcre2-lib pcre2)
