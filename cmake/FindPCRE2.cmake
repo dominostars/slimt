@@ -47,6 +47,13 @@ if(SLIMT_USE_INTERNAL_PCRE2)
 
   include(GNUInstallDirs)
   set(PCRE2_CONFIGURE_OPTIONS
+      # The custom CONFIGURE_COMMAND below bypasses ExternalProject's generator
+      # inheritance, so the nested cmake falls back to the platform default —
+      # on Windows that probes for nmake/VS and fails under the Android Gradle
+      # (Ninja) build. Pass the parent's generator explicitly, quoted so a
+      # value with spaces ("Ninja Multi-Config", "Unix Makefiles") stays one
+      # argument instead of being split at list expansion.
+      "-G${CMAKE_GENERATOR}"
       -DBUILD_SHARED_LIBS=OFF
       -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}
       -DCMAKE_BUILD_TYPE=Release
@@ -56,6 +63,15 @@ if(SLIMT_USE_INTERNAL_PCRE2)
       -DCMAKE_CROSSCOMPILING_EMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR_WITH_SEMICOLON}
       -DCMAKE_POSITION_INDEPENDENT_CODE:BOOL=true # Added for pybind11
   )
+
+  # The parent's build tool too (quoted — commonly under "Program Files"), but
+  # only when the parent defines one: single-config generators (Ninja,
+  # Makefiles) always do, while IDE generators (Visual Studio, Xcode) locate
+  # their own and an explicit empty value would break the nested configure.
+  if(CMAKE_MAKE_PROGRAM)
+    list(APPEND PCRE2_CONFIGURE_OPTIONS
+         "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}")
+  endif()
 
   # Android platform needs to be explicitly passed given this is an external
   # project. If not supplied armv8-a switches into armv7-a, making the compiled
