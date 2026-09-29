@@ -24,30 +24,20 @@ namespace slimt {
 
 namespace {
 // Activation multiplier for the split-vocab output projection, computed at
-// decode time because those models ship no usable precomputed alpha. A high
-// percentile of |x| (rather than the raw max) keeps a lone outlier activation
-// from compressing the int8 range and adding quantization noise.
+// decode time because those models ship no usable precomputed alpha. It is
+// 127 / max|x|, the multiplier Marian's intgemm path computes when it
+// quantizes activations without a precomputed alpha. A 95th-percentile clip
+// used here before was tuned on one stutter (ですねね) and moved output away
+// from Firefox's engine overall: on 500 en->ja test lines it matched that
+// engine 45 times against 346 for the raw max, and doubled more characters
+// the engine does not (14 lines against 2).
 float dynamic_activation_quant(const Tensor &x) {
-  size_t n = x.size();
-  if (n == 0) {
-    return 1.0F;
-  }
   const float *data = x.data<float>();
-  std::vector<float> mags(n);
-  for (size_t i = 0; i < n; ++i) {
-    mags[i] = std::fabs(data[i]);
+  float max_abs = 0.0F;
+  for (size_t i = 0; i < x.size(); ++i) {
+    max_abs = std::max(max_abs, std::fabs(data[i]));
   }
-  // Clip the top ~5% of activation magnitudes before quantizing. These tiny
-  // base-memory models have heavy-tailed activations; quantizing against the raw
-  // max lets a lone outlier compress the int8 range and produce a quant-noise
-  // token stutter (e.g. ですねね). The 95th percentile was the least-aggressive
-  // clip that removed the observed stutter with no regression across a diverse
-  // ja/zh/ko set (threshold was ~0.97; 0.95 leaves margin for unseen inputs).
-  constexpr float kPercentile = 0.95F;
-  size_t k = static_cast<size_t>(kPercentile * static_cast<float>(n - 1));
-  std::nth_element(mags.begin(), mags.begin() + k, mags.end());
-  float ref = mags[k];
-  return ref > 0.0F ? 127.0F / ref : 1.0F;
+  return max_abs > 0.0F ? 127.0F / max_abs : 1.0F;
 }
 }  // namespace
 
