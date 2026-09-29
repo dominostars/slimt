@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdio>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 #define SLIMT_BREAK std::raise(SIGTRAP)
 
@@ -27,18 +29,22 @@
   SLIMT_TRACE2(x, y);         \
   SLIMT_TRACE(z);
 
-#define SLIMT_ABORT_IF(condition, error) \
-  do {                                   \
-    if (condition) {                     \
-      std::cerr << (error) << '\n';      \
-      std::abort();                      \
-    }                                    \
+// These throw rather than std::abort(): an abort takes an Android app's whole
+// process down with a SIGABRT that no try/catch can intercept, while a throw
+// reaches the JNI's catch, which fails the call and lets the app fall back
+// (a shortlist whose header or size check fails then fails its load instead
+// of crashing; io::load_items throws the same way on a model's version or
+// type).
+#define SLIMT_ABORT_IF(condition, error)                           \
+  do {                                                             \
+    if (condition) {                                               \
+      throw std::runtime_error(std::string("[slimt] ") + (error)); \
+    }                                                              \
   } while (0)
 
-#define SLIMT_ABORT(message) \
-  do {                       \
-    std::cerr << (message);  \
-    std::abort();            \
+#define SLIMT_ABORT(message)                                       \
+  do {                                                             \
+    throw std::runtime_error(std::string("[slimt] ") + (message)); \
   } while (0)
 
 #ifdef SLIMT_ENABLE_LOG
