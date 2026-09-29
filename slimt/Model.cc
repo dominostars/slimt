@@ -158,8 +158,8 @@ Histories Model::decode(const Tensor &encoder_out, const Input &input) const {
   const Decoder &decoder = transformer_.decoder();
   Words previous_slice = {};
   std::vector<Tensor> states = decoder.start_states(batch_size);
-  auto [logits, attn] =
-      decoder.step(encoder_out, input.mask(), states, previous_slice, indices);
+  auto [logits, attn] = decoder.step(encoder_out, input.mask(), states,
+                                     previous_slice, indices, /*position=*/0);
 
   if (indices) {
     previous_slice =
@@ -175,7 +175,7 @@ Histories Model::decode(const Tensor &encoder_out, const Input &input) const {
   size_t max_seq_length = input.limit_factor() * source_sequence_length;
   for (size_t i = 1; i < max_seq_length && remaining > 0; i++) {
     auto [logits, attn] = decoder.step(encoder_out, input.mask(), states,
-                                       previous_slice, indices);
+                                       previous_slice, indices, /*position=*/i);
     if (indices) {
       previous_slice =
           greedy_sample_from_words(logits, target_vocabulary(), *indices, batch_size);
@@ -209,7 +209,7 @@ Histories Model::forward(const Input &input) const {
 
   Tensor word_embedding =
       index_select(transformer_.embedding(), indices, "word_embedding");
-  transform_embedding(word_embedding);
+  transform_embedding(word_embedding, /*start=*/0);
 
   // https://github.com/browsermt/marian-dev/blob/14c9d9b0e732f42674e41ee138571d5a7bf7ad94/src/models/transformer.h#L570
   // https://github.com/browsermt/marian-dev/blob/14c9d9b0e732f42674e41ee138571d5a7bf7ad94/src/models/transformer.h#L133

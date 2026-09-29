@@ -39,10 +39,15 @@ class Decoder {
   void set_split_vocab(bool split) { split_vocab_ = split; }
 
   std::vector<Tensor> start_states(size_t batch_size) const;
+  // One greedy decoding step. `position` is the target position of this step
+  // (0 for the first, which reads the empty start embedding); the decoder
+  // input gets that position's sinusoidal signal, as Marian's
+  // DecoderTransformer::step adds `startPos`.
   std::tuple<Tensor, Tensor> step(const Tensor &encoder_out, const Tensor &mask,
                                   std::vector<Tensor> &states,
                                   const Words &previous_step,
-                                  const std::optional<Words> &shortlist) const;
+                                  const std::optional<Words> &shortlist,
+                                  size_t position) const;
 
  private:
   const Tensor *embedding_;
@@ -59,7 +64,11 @@ Words greedy_sample_from_words(const Tensor &logits,
                                const Vocabulary &vocabulary, const Words &words,
                                size_t batch_size);
 
-void transform_embedding(Tensor &word_embedding, size_t start = 0);
+// Scales by sqrt(embed_dim) and adds the sinusoidal signal for positions
+// [start, start + sequence_length). No default: a decoder step must pass its
+// own position, and a silent start of 0 there made every step read position 0
+// (greedy decoding then repeats phrases).
+void transform_embedding(Tensor &word_embedding, size_t start);
 
 class Transformer {
  public:

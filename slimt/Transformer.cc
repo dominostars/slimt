@@ -51,7 +51,7 @@ float dynamic_activation_quant(const Tensor &x) {
 }
 }  // namespace
 
-void transform_embedding(Tensor &word_embedding, size_t start /* = 0*/) {
+void transform_embedding(Tensor &word_embedding, size_t start) {
   // This is a pain, why does marian-transpose here, I do not get yet.
 
   uint64_t embed_dim = word_embedding.dim(-1);
@@ -175,7 +175,8 @@ void Decoder::register_parameters(const std::string &prefix,
 
 std::tuple<Tensor, Tensor> Decoder::step(
     const Tensor &encoder_out, const Tensor &mask, std::vector<Tensor> &states,
-    const Words &previous_step, const std::optional<Words> &shortlist) const {
+    const Words &previous_step, const std::optional<Words> &shortlist,
+    size_t position) const {
   // Infer batch-size from encoder_out.
   size_t encoder_feature_dim = encoder_out.dim(-1);
   size_t source_sequence_length = encoder_out.dim(-2);
@@ -213,7 +214,12 @@ std::tuple<Tensor, Tensor> Decoder::step(
   };
 
   Tensor decoder_embed = from_sentences(previous_step, batch_size);
-  transform_embedding(decoder_embed);
+  // The positional signal is this step's target position, as in Marian's
+  // DecoderTransformer::step (`startPos = state->getPosition()`). With every
+  // step reading position 0, the decoder cannot tell where it is in the output
+  // and greedy decoding repeats phrases.
+  // https://github.com/browsermt/marian-dev/blob/14c9d9b0e732f42674e41ee138571d5a7bf7ad94/src/models/transformer.h#L709
+  transform_embedding(decoder_embed, position);
 
   auto [x, attn] =
       decoder_[0].forward(encoder_out, mask, states[0], decoder_embed);
