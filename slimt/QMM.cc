@@ -9,8 +9,10 @@
 
 // PlayTranslate spike patch: select exactly ONE int8 provider, preferring
 // gemmology. On Android we keep ruy linked for float sgemm (TensorOps.cc, the
-// WITH_BLAS=OFF path) while using gemmology for int8 — which avoids the
-// ruy-on-ARM int8 garbage-output bug (DavidVentura/offline-translator#185).
+// WITH_BLAS=OFF path) while using gemmology for int8, whose u8 x i8 "shift"
+// arithmetic matches the intgemm path Firefox's engine runs.
+// (DavidVentura/offline-translator#185, once read as a ruy-on-ARM int8 bug,
+// was closed there as near-tie decoding noise, not a ruy defect.)
 // Original slimt declared the three blocks with independent #ifdefs, which
 // double-defines kProvider when ruy+gemmology are both enabled.
 #if defined(SLIMT_HAS_GEMMOLOGY)
