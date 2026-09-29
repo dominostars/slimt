@@ -104,13 +104,16 @@ Batch Batcher::generate() {
     auto p = bucket_[length].begin();
     while (p != bucket_[length].end()) {
       padded_batch_size = (batch.size() + 1) * length;
-      if (padded_batch_size <= max_words_) {
+      // A segment longer than max_words on its own still goes, as a batch of
+      // one. An empty batch reads as "no work left" to every caller
+      // (exhaust(), AggregateBatcher::generate), which would strand it: a
+      // pivot's second hop is never re-wrapped, so its segments can exceed
+      // max_words, and such a translation used to come back empty.
+      if (padded_batch_size <= max_words_ || batch.empty()) {
         auto q = p++;
         batch.add(*q);
         bucket_[length].erase(q);
       } else {
-        // Check if elements exist
-        assert(!batch.empty());
         return batch;
       }
     }
