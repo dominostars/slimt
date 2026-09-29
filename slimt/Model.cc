@@ -172,7 +172,16 @@ Histories Model::decode(const Tensor &encoder_out, const Input &input) const {
   record(previous_slice, sentences);
 
   size_t remaining = sentences.size();
-  size_t max_seq_length = input.limit_factor() * source_sequence_length;
+  // Cap on target length, in decoding steps: the factor times the batch's
+  // padded source length (PlayTranslate's JNI sets 2.0, Firefox's
+  // max-length-factor), plus a fixed slack. A purely proportional cap starves
+  // short sources: at 2.0x, 今日会わない? stopped at "Don't you see meet"
+  // before "today?", as Firefox's engine does. The slack lets a runaway loop
+  // run at most kTargetLengthSlack more steps.
+  constexpr size_t kTargetLengthSlack = 8;
+  size_t max_seq_length =
+      static_cast<size_t>(input.limit_factor() * source_sequence_length) +
+      kTargetLengthSlack;
   for (size_t i = 1; i < max_seq_length && remaining > 0; i++) {
     auto [logits, attn] = decoder.step(encoder_out, input.mask(), states,
                                        previous_slice, indices, /*position=*/i);
